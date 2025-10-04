@@ -4,7 +4,8 @@ const {
   DEFAULT_COMMUNITY,
 } = require('./powerApi');
 const { fetchDailyPrecipitationFromImerg } = require('./gesdiscOpendap');
-const { buildForecast } = require('../utils/forecast');
+const { mergeThresholds, computeProbabilitiesWithThresholds } = require('../utils/statistics');
+const { computeCategoryComparison } = require('../utils/forecast');
 
 const DEFAULT_MIN_TRAINING_YEAR = 1984;
 
@@ -127,17 +128,18 @@ async function gatherExternalObservations({ latitude, longitude, targetDate }) {
 
   return observations;
 }
+function normalizeForecastOptions(options = {}) {
+  const {
+    latitude,
+    longitude,
+    targetDate,
+    trainingStartYear,
+    trainingEndYear,
+    parameters,
+    community,
+    thresholds,
+  } = options;
 
-async function generateForecast({
-  latitude,
-  longitude,
-  targetDate,
-  trainingStartYear,
-  trainingEndYear,
-  parameters,
-  community,
-  thresholds,
-}) {
   if (typeof latitude !== 'number' || Number.isNaN(latitude) || latitude < -90 || latitude > 90) {
     throw new Error('latitude must be a number between -90 and 90');
   }
@@ -167,77 +169,160 @@ async function generateForecast({
 
   const parameterList = normalizeParameters(parameters);
   const resolvedCommunity = community || DEFAULT_COMMUNITY;
+  const resolvedThresholds = mergeThresholds(thresholds);
   const monthDay = formatMonthDayFromDate(target);
 
-  const [trainingData, evaluationData] = await Promise.all([
-    fetchDataForRange({
-      latitude,
-      longitude,
-      startMonthDay: monthDay,
-      endMonthDay: monthDay,
-      startYear: resolvedStartYear,
-      endYear: resolvedEndYear,
-      parameters: parameterList,
-      community: resolvedCommunity,
-    }),
-    fetchDataForRange({
-      latitude,
-      longitude,
-      startMonthDay: monthDay,
-      endMonthDay: monthDay,
-      startYear: targetYear,
-      endYear: targetYear,
-      parameters: parameterList,
-      community: resolvedCommunity,
-    }),
-  ]);
+  return {
+    latitude,
+    longitude,
+    targetDate: target.toISOString().slice(0, 10),
+    targetYear,
+    resolvedStartYear,
+    resolvedEndYear,
+    parameterList,
+    resolvedCommunity,
+    resolvedThresholds,
+    monthDay,
+  };
+}
 
-  const trainingRecords = trainingData.records.filter((record) => record.seasonYear <= resolvedEndYear);
-  const evaluationRecords = evaluationData.records.filter((record) => record.seasonYear === targetYear);
+async function generateForecastSnapshot(options = {}) {
+  const {
+    latitude,
+    longitude,
+    targetDate,
+    targetYear,
+    resolvedStartYear,
+    resolvedEndYear,
+    parameterList,
+    resolvedCommunity,
+    resolvedThresholds,
+    monthDay,
+  } = normalizeForecastOptions(options);
+
+  const trainingData = await fetchDataForRange({
+    latitude,
+    longitude,
+    startMonthDay: monthDay,
+    endMonthDay: monthDay,
+    startYear: resolvedStartYear,
+    endYear: resolvedEndYear,
+    parameters: parameterList,
+    community: resolvedCommunity,
+  });
+
+  const trainingRecords = trainingData.records.filter(
+    (record) => record.seasonYear <= resolvedEndYear,
+  );
 
   if (!trainingRecords.length) {
     throw new Error('No historical records available for the requested training period.');
   }
 
+  const trainingStats = computeProbabilitiesWithThresholds(trainingRecords, resolvedThresholds);
+
+  return {
+    type: 'ForecastSnapshot',
+    generatedAt: new Date().toISOString(),
+    query: {
+      latitude,
+      longitude,
+      targetDate,
+      evaluationYear: targetYear,
+      trainingStartYear: resolvedStartYear,
+      trainingEndYear: resolvedEndYear,
+      parameters: parameterList,
+      community: resolvedCommunity,
+      thresholds: resolvedThresholds,
+    },
+    thresholds: resolvedThresholds,
+    training: {
+      totalDays: trainingStats.totalDays,
+      probabilities: trainingStats.probabilities,
+      aggregates: trainingStats.aggregates,
+    },
+    metadata: {
+      training: trainingData.metadata,
+    },
+  };
+}
+
+function assertValidSnapshot(snapshot) {
+  if (!snapshot || snapshot.type !== 'ForecastSnapshot') {
+    throw new Error('A forecast snapshot produced by generateForecastSnapshot is required.');
+  }
+
+  if (!snapshot.query || !snapshot.thresholds || !snapshot.training) {
+    throw new Error('Forecast snapshot is missing required fields.');
+  }
+}
+
+async function completeForecastFromSnapshot(snapshot, { skipExternalObservations = false } = {}) {
+  assertValidSnapshot(snapshot);
+
+  const { query, thresholds, training } = snapshot;
+  const { latitude, longitude, targetDate, evaluationYear, parameters, community } = query;
+
+  const target = ensureDate(targetDate);
+  const monthDay = formatMonthDayFromDate(target);
+  const parameterList = normalizeParameters(parameters);
+  const resolvedCommunity = community || DEFAULT_COMMUNITY;
+
+  const evaluationData = await fetchDataForRange({
+    latitude,
+    longitude,
+    startMonthDay: monthDay,
+    endMonthDay: monthDay,
+    startYear: evaluationYear,
+    endYear: evaluationYear,
+    parameters: parameterList,
+    community: resolvedCommunity,
+  });
+
+  const evaluationRecords = evaluationData.records.filter(
+    (record) => record.seasonYear === evaluationYear,
+  );
+
   if (!evaluationRecords.length) {
     throw new Error('No evaluation records available for the requested target date.');
   }
 
-  const forecast = buildForecast(trainingRecords, evaluationRecords, thresholds);
+  const evaluationStats = computeProbabilitiesWithThresholds(evaluationRecords, thresholds);
+  const comparison = computeCategoryComparison(training, evaluationStats);
 
-  const externalObservations = await gatherExternalObservations({
-    latitude,
-    longitude,
-    targetDate,
-  });
+  const externalObservations = skipExternalObservations
+    ? []
+    : await gatherExternalObservations({ latitude, longitude, targetDate });
 
   return {
-    query: {
-      latitude,
-      longitude,
-      targetDate: target.toISOString().slice(0, 10),
-      trainingStartYear: resolvedStartYear,
-      trainingEndYear: resolvedEndYear,
-      evaluationYear: targetYear,
-      parameters: parameterList,
-      community: resolvedCommunity,
-      thresholds: forecast.thresholds,
-    },
-    training: forecast.training,
+    snapshotGeneratedAt: snapshot.generatedAt,
+    completedAt: new Date().toISOString(),
+    query,
+    thresholds,
+    training,
     evaluation: {
-      year: targetYear,
-      ...forecast.evaluation,
+      year: evaluationYear,
+      ...evaluationStats,
     },
-    comparison: forecast.comparison,
+    comparison,
     externalObservations,
     metadata: {
-      training: trainingData.metadata,
+      training: snapshot.metadata?.training ?? null,
       evaluation: evaluationData.metadata,
     },
   };
 }
 
+async function generateForecast(options = {}) {
+  const snapshot = await generateForecastSnapshot(options);
+  return completeForecastFromSnapshot(snapshot, {
+    skipExternalObservations: Boolean(options.skipExternalObservations),
+  });
+}
+
 module.exports = {
   generateForecast,
+  generateForecastSnapshot,
+  completeForecastFromSnapshot,
   DEFAULT_MIN_TRAINING_YEAR,
 };

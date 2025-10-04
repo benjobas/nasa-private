@@ -1,0 +1,13 @@
+Estado de validación: VALIDO
+Fecha: 2025-10-04T22:43:34.575Z
+Tamaño de la muestra: 30
+Predicciones exitosas: 30
+Predicciones fallidas: 0
+Brier medio (promedio de meanBrier): 0.0263
+Brier global (todas categorías): 0.0263
+IC Bootstrap Brier global (p05–p95): 0.0112 – 0.0468
+Filas categoría (para Brier global): 150
+Observaciones externas exitosas: 0
+Observaciones externas fallidas: 0
+Duración total: 30m 58s
+Archivo auditoría: C:\Users\Asus\Desktop\NASA\backend\reports\forecast-validation-audit.csv

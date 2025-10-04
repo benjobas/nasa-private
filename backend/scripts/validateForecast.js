@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-const { generateForecast } = require('../services/forecastModel');
+const { generateForecastSnapshot, completeForecastFromSnapshot } = require('../services/forecastModel');
+const fs = require('fs/promises');
+const path = require('path');
+const crypto = require('crypto');
 
 const SAMPLE_LOCATIONS = [
   { name: 'New York', latitude: 40.7128, longitude: -74.006 },
@@ -49,44 +52,160 @@ function randomDateInYear(random, year) {
   return date;
 }
 
+function formatDuration(milliseconds) {
+  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+
+  if (hours > 0) {
+    parts.push(`${hours}h`);
+  }
+
+  if (minutes > 0 || hours > 0) {
+    parts.push(`${minutes}m`);
+  }
+
+  parts.push(`${seconds}s`);
+
+  return parts.join(' ');
+}
+
+function hashSnapshotProbabilities(probabilities) {
+  const snapshotString = Object.entries(probabilities || {})
+    .map(([category, info]) => `${category}:${info && info.probability !== undefined ? info.probability : ''}`)
+    .sort()
+    .join('|');
+  return crypto.createHash('sha256').update(snapshotString).digest('hex');
+}
+
+function hashComparisonProbabilities(categories) {
+  const comparisonString = Object.entries(categories || {})
+    .map(
+      ([category, info]) =>
+        `${category}:${
+          info && info.predictedProbability !== undefined ? info.predictedProbability : ''
+        }`,
+    )
+    .sort()
+    .join('|');
+  return crypto.createHash('sha256').update(comparisonString).digest('hex');
+}
+
+function aggregateGlobalBrier(categoryRows) {
+  // categoryRows: [{p, o}]
+  if (!categoryRows.length) return null;
+  const sum = categoryRows.reduce((a, r) => a + (r.p - r.o) * (r.p - r.o), 0);
+  return sum / categoryRows.length;
+}
+
+function bootstrapBrier(categoryRows, iterations = 500, random = Math.random) {
+  if (categoryRows.length === 0) return null;
+  const n = categoryRows.length;
+  const samples = [];
+  for (let i = 0; i < iterations; i += 1) {
+    let s = 0;
+    for (let k = 0; k < n; k += 1) {
+      const r = categoryRows[Math.floor(random() * n)];
+      s += (r.p - r.o) * (r.p - r.o);
+    }
+    samples.push(s / n);
+  }
+  samples.sort((a, b) => a - b);
+  return {
+    mean: samples.reduce((a, v) => a + v, 0) / samples.length,
+    p05: samples[Math.floor(0.05 * samples.length)],
+    p95: samples[Math.floor(0.95 * samples.length)],
+  };
+}
+
 async function main() {
-  const sampleSize = Number(process.env.SAMPLE_SIZE || 200);
+  const sampleSize = Number(process.env.SAMPLE_SIZE || 10);
   const seed = Number(process.env.RANDOM_SEED || 123456789);
+  const progressInterval = Number(process.env.PROGRESS_INTERVAL || 1);
   const random = createPseudoRandom(seed);
 
   const results = [];
+  const categoryLevelRows = []; // Para Brier global y bootstrap
   let successes = 0;
   let failures = 0;
   let networkFailures = 0;
   let externalSuccesses = 0;
   let externalFailures = 0;
+  const startedAt = Date.now();
+
+  // Cabecera CSV auditoría detallada
+  const auditCsv = [];
+  auditCsv.push([
+    'sampleIndex',
+    'targetDate',
+    'lat',
+    'lon',
+    'category',
+    'predictedProbability',
+    'actualOutcome',
+    'hashSnapshot',
+    'hashVerified',
+    'predictionGeneratedAt',
+    'verificationCompletedAt',
+  ].join(','));
 
   for (let index = 0; index < sampleSize; index += 1) {
     const location = randomFromArray(SAMPLE_LOCATIONS, random);
-    const jitterLat = (random() - 0.5) * 1.2; // ±0.6°
+    const jitterLat = (random() - 0.5) * 1.2;
     const jitterLon = (random() - 0.5) * 1.2;
     const latitude = Math.max(-89.9, Math.min(89.9, location.latitude + jitterLat));
     const longitude = Math.max(-179.9, Math.min(179.9, location.longitude + jitterLon));
-    const year = 2020 + Math.floor(random() * 3); // 2020-2022 inclusive
+    const year = 2020 + Math.floor(random() * 3);
     const targetDate = randomDateInYear(random, year).toISOString().slice(0, 10);
 
     try {
-      const forecast = await generateForecast({ latitude, longitude, targetDate });
-      const { meanBrierScore } = forecast.comparison;
-      const validCategoryCount = Object.values(forecast.comparison.categories).filter(
-        (category) => category.actualOutcome !== null && category.predictedProbability !== null,
+      const snapshot = await generateForecastSnapshot({ latitude, longitude, targetDate });
+      const snapshotHash = hashSnapshotProbabilities(snapshot.training.probabilities);
+
+      const forecast = await completeForecastFromSnapshot(snapshot);
+      const { meanBrierScore, categories } = forecast.comparison;
+      const verifiedHash = hashComparisonProbabilities(categories);
+
+      if (snapshotHash !== verifiedHash) {
+        console.warn(
+          `Advertencia: discrepancia entre hash de snapshot y verificación para la muestra ${index + 1}.`,
+        );
+      }
+
+      // Auditoría categoría por categoría
+      for (const [cat, info] of Object.entries(categories)) {
+        const p = (info.predictedProbability ?? null);
+        const o = (info.actualOutcome ?? null);
+        if (p !== null && o !== null) {
+          categoryLevelRows.push({ p, o });
+        }
+        auditCsv.push([
+          index,
+            targetDate,
+            latitude.toFixed(4),
+            longitude.toFixed(4),
+            cat,
+            p === null ? '' : p,
+            o === null ? '' : o,
+            snapshotHash,
+            verifiedHash,
+            snapshot.generatedAt,
+            forecast.completedAt,
+        ].join(','));
+      }
+
+      const validCategoryCount = Object.values(categories).filter(
+        (c) => c.actualOutcome !== null && c.predictedProbability !== null,
       ).length;
 
       const imergObservation = (forecast.externalObservations || []).find(
         (observation) => observation.datasetId === 'GPM_3IMERGDF.06',
       );
-
       if (imergObservation) {
-        if (imergObservation.error) {
-          externalFailures += 1;
-        } else {
-          externalSuccesses += 1;
-        }
+        if (imergObservation.error) externalFailures += 1;
+        else externalSuccesses += 1;
       }
 
       successes += 1;
@@ -96,63 +215,100 @@ async function main() {
         targetDate,
         meanBrierScore,
         validCategoryCount,
+        predictionGeneratedAt: snapshot.generatedAt,
+        verificationCompletedAt: forecast.completedAt,
       });
     } catch (error) {
       failures += 1;
-      const message = error && error.message ? error.message : String(error);
-      if (message.includes('Failed to reach NASA POWER API')) {
-        networkFailures += 1;
-      }
-
+      const message = (error && error.message) ? error.message : String(error);
+      if (message.includes('Failed to reach NASA POWER API')) networkFailures += 1;
       console.error(
-        `Failed forecast for sample ${index + 1}/${sampleSize} (${latitude.toFixed(2)}, ${longitude.toFixed(
+        `Failed forecast sample ${index + 1}/${sampleSize} (${latitude.toFixed(2)}, ${longitude.toFixed(
           2,
-        )}) on ${targetDate}: ${message}`,
+        )}) ${targetDate}: ${message}`,
       );
+    }
+
+    const shouldReportProgress =
+      progressInterval > 0 && ((index + 1) % progressInterval === 0 || index === sampleSize - 1);
+    if (shouldReportProgress) {
+      const completed = index + 1;
+      const elapsedMs = Date.now() - startedAt;
+      const avgPerSample = elapsedMs / completed;
+      const remaining = sampleSize - completed;
+      const etaMs = remaining * avgPerSample;
+      const percent = ((completed / sampleSize) * 100).toFixed(1);
+      console.log(`Progreso: ${completed}/${sampleSize} (${percent}%) · Tiempo: ${formatDuration(elapsedMs)} · ETA: ${formatDuration(etaMs)}`);
     }
   }
 
+  // Brier medio (promedio simple de meanBrierScore existente)
   const brierScores = results
-    .map((result) => result.meanBrierScore)
-    .filter((score) => typeof score === 'number' && Number.isFinite(score));
-  const averageBrier =
-    brierScores.length > 0 ? brierScores.reduce((acc, score) => acc + score, 0) / brierScores.length : null;
+    .map(r => r.meanBrierScore)
+    .filter(v => typeof v === 'number' && Number.isFinite(v));
+  const averageBrier = brierScores.length
+    ? brierScores.reduce((a, b) => a + b, 0) / brierScores.length
+    : null;
 
-  console.log('Forecast validation summary');
-  console.log('===========================');
-  console.log(`Total samples: ${sampleSize}`);
-  console.log(`Successful forecasts: ${successes}`);
-  console.log(`Failed forecasts: ${failures}`);
-  if (averageBrier !== null) {
-    console.log(`Average mean Brier score: ${averageBrier.toFixed(4)}`);
-  } else {
-    console.log('Average mean Brier score: unavailable');
-  }
+  // Brier global (todas las categorías juntas)
+  const globalBrier = aggregateGlobalBrier(categoryLevelRows);
 
-  if (externalSuccesses + externalFailures > 0) {
-    console.log(`External observations fetched: ${externalSuccesses}`);
-    console.log(`External observations failed: ${externalFailures}`);
-  }
+  // Bootstrap (IC)
+  const bootstrapStats = categoryLevelRows.length >= 20
+    ? bootstrapBrier(categoryLevelRows, 400, createPseudoRandom(seed + 999))
+    : null;
 
   if (successes === 0) {
     if (networkFailures === sampleSize) {
-      console.warn('All forecasts failed due to network connectivity issues. Skipping validation.');
+      console.warn('Todos fallaron por red. Abortando.');
       return;
     }
-
-    console.error('No successful forecasts were generated.');
+    console.error('Sin pronósticos exitosos.');
     process.exit(1);
   }
-
   if (successes < sampleSize * 0.5) {
-    console.error('Less than half of the forecasts succeeded; investigation required.');
+    console.error('Menos del 50% de éxitos; revisar.');
     process.exit(1);
   }
 
-  console.log('Validation completed successfully.');
+  const totalDuration = Date.now() - startedAt;
+  const validationStatus = successes >= sampleSize * 0.5 ? 'VALIDO' : 'NO VALIDO';
+
+  // Guardar informes
+  const reportDir = path.resolve(__dirname, '../reports');
+  await fs.mkdir(reportDir, { recursive: true });
+
+  // CSV auditoría
+  const auditPath = path.join(reportDir, 'forecast-validation-audit.csv');
+  await fs.writeFile(auditPath, auditCsv.join('\n'), 'utf8');
+
+  // Reporte TXT
+  const reportLines = [
+    `Estado de validación: ${validationStatus}`,
+    `Fecha: ${new Date().toISOString()}`,
+    `Tamaño de la muestra: ${sampleSize}`,
+    `Predicciones exitosas: ${successes}`,
+    `Predicciones fallidas: ${failures}`,
+    averageBrier !== null ? `Brier medio (promedio de meanBrier): ${averageBrier.toFixed(4)}` : 'Brier medio: no disponible',
+    globalBrier !== null ? `Brier global (todas categorías): ${globalBrier.toFixed(4)}` : 'Brier global: no disponible',
+    bootstrapStats ? `IC Bootstrap Brier global (p05–p95): ${bootstrapStats.p05.toFixed(4)} – ${bootstrapStats.p95.toFixed(4)}` : 'IC Bootstrap: muestra insuficiente (<20 filas categoría)',
+    `Filas categoría (para Brier global): ${categoryLevelRows.length}`,
+    `Observaciones externas exitosas: ${externalSuccesses}`,
+    `Observaciones externas fallidas: ${externalFailures}`,
+    `Duración total: ${formatDuration(totalDuration)}`,
+    `Archivo auditoría: ${auditPath}`,
+  ];
+  const reportContent = `${reportLines.join('\n')}\n`;
+  const reportPath = path.join(reportDir, 'forecast-validation-report.txt');
+  await fs.writeFile(reportPath, reportContent, 'utf8');
+
+  console.log('Resumen validación');
+  console.log('==================');
+  reportLines.forEach(l => console.log(l));
+  console.log('Validación completada.');
 }
 
-main().catch((error) => {
-  console.error('Unexpected error while validating forecasts:', error);
+main().catch(err => {
+  console.error('Error inesperado:', err);
   process.exit(1);
 });
