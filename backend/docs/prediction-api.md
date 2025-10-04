@@ -1,6 +1,7 @@
 Características principales:
 
 - Integración con la [API de NASA POWER](https://power.larc.nasa.gov/).
+- Observaciones externas opcionales desde [GESDISC OPeNDAP (GPM IMERG)](https://disc.gsfc.nasa.gov/information/tools?title=OPeNDAP%20and%20GDS) para reforzar los resultados de precipitación.
 - Probabilidades para días "muy calurosos", "muy fríos", "muy ventosos", "muy húmedos" y "muy incómodos".
 - Umbrales configurables para cada categoría.
 - Métricas agregadas (temperaturas medias, precipitación total, etc.) útiles para construir paneles de control.
@@ -11,6 +12,13 @@ Características principales:
 cd backend
 npm install
 node index.js
+```
+
+### Configuración de entorno
+
+```bash
+cp .env.example .env
+# Edita .env y pega tu token Bearer de GESDISC en GESDISC_TOKEN=
 ```
 
 ## Endpoints
@@ -100,6 +108,17 @@ Genera una predicción para una fecha puntual utilizando un histórico de entren
       }
     }
   },
+  "externalObservations": [
+    {
+      "type": "precipitation",
+      "dataset": "GPM IMERG Daily Precipitation (Final Run)",
+      "precipitationMm": 12.4,
+      "gridPoint": { "latitude": 40.05, "longitude": -73.95 },
+      "indices": { "latitude": 1301, "longitude": 1059 },
+      "sourceUrl": "https://gpm1.gesdisc.eosdis.nasa.gov/opendap/GPM_L3/.../3B-DAY.MS.MRG.3IMERG.20220704-S000000-E235959.V06B.HDF5.nc4",
+      "queryUrl": "https://gpm1.gesdisc.eosdis.nasa.gov/opendap/...precipitationCal[0:0][1301:1301][1059:1059]"
+    }
+  ],
   "metadata": {
     "training": [ ... ],
     "evaluation": [ ... ]
@@ -130,4 +149,10 @@ Estos valores se proponen como valores predeterminados razonables para planifica
 - La cobertura de datos de NASA POWER es mejor entre 1984 y el presente. Las solicitudes fuera de esta ventana pueden devolver datos escasos.
 - La implementación actual se centra en consultas puntuales (latitud/longitud). Las consultas promediadas por área podrían añadirse integrando otras APIs de NASA que soporten cajas delimitadoras.
 - Se puede incorporar una capa de caché (por ejemplo, Redis o sistema de archivos) para reducir descargas repetidas para ubicaciones populares.
+- Para habilitar la observación externa de precipitación, define `GESDISC_TOKEN` (Bearer) en un `.env` conforme a `.env.example`. Si no se configura, la API devolverá el motivo en `externalObservations[].error` pero el resto de la respuesta seguirá disponible.
+
+## Pruebas y validación
+
+- `npm test`: ejecuta pruebas unitarias, incluida la integración opcional con GESDISC (se omite automáticamente si no hay token).
+- `npm run validate:forecast`: muestrea cientos de ubicaciones aleatorias contra NASA POWER y reporta precisión promedio. Requiere conectividad externa.
 

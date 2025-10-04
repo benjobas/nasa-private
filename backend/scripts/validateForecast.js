@@ -58,6 +58,8 @@ async function main() {
   let successes = 0;
   let failures = 0;
   let networkFailures = 0;
+  let externalSuccesses = 0;
+  let externalFailures = 0;
 
   for (let index = 0; index < sampleSize; index += 1) {
     const location = randomFromArray(SAMPLE_LOCATIONS, random);
@@ -74,6 +76,18 @@ async function main() {
       const validCategoryCount = Object.values(forecast.comparison.categories).filter(
         (category) => category.actualOutcome !== null && category.predictedProbability !== null,
       ).length;
+
+      const imergObservation = (forecast.externalObservations || []).find(
+        (observation) => observation.datasetId === 'GPM_3IMERGDF.06',
+      );
+
+      if (imergObservation) {
+        if (imergObservation.error) {
+          externalFailures += 1;
+        } else {
+          externalSuccesses += 1;
+        }
+      }
 
       successes += 1;
       results.push({
@@ -113,6 +127,11 @@ async function main() {
     console.log(`Average mean Brier score: ${averageBrier.toFixed(4)}`);
   } else {
     console.log('Average mean Brier score: unavailable');
+  }
+
+  if (externalSuccesses + externalFailures > 0) {
+    console.log(`External observations fetched: ${externalSuccesses}`);
+    console.log(`External observations failed: ${externalFailures}`);
   }
 
   if (successes === 0) {

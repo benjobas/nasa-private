@@ -4,17 +4,14 @@ GET http://localhost:3000/
 ### Obtener valores predeterminados
 GET http://localhost:3000/api/probabilities/defaults
 
-### Calcular probabilidades
-POST http://localhost:3000/api/probabilities
+### Generar forecast con observaciones externas
+POST http://localhost:3000/api/probabilities/forecast
 Content-Type: application/json
 
 {
   "latitude": 40.7128,
   "longitude": -74.006,
-  "startMonthDay": "0601",
-  "endMonthDay": "0831",
-  "startYear": 2013,
-  "endYear": 2022,
+  "targetDate": "2022-07-04",
   "thresholds": {
     "veryHot": { "temperatureC": 30 },
     "veryWindy": { "windSpeedMs": 8 }

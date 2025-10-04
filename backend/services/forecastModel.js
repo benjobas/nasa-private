@@ -3,6 +3,7 @@ const {
   DEFAULT_PARAMETERS,
   DEFAULT_COMMUNITY,
 } = require('./powerApi');
+const { fetchDailyPrecipitationFromImerg } = require('./gesdiscOpendap');
 const { buildForecast } = require('../utils/forecast');
 
 const DEFAULT_MIN_TRAINING_YEAR = 1984;
@@ -95,6 +96,38 @@ async function fetchDataForRange({
   return { records, metadata };
 }
 
+async function gatherExternalObservations({ latitude, longitude, targetDate }) {
+  const observations = [];
+
+  try {
+    const imerg = await fetchDailyPrecipitationFromImerg({
+      latitude,
+      longitude,
+      date: targetDate,
+    });
+
+    observations.push({
+      type: 'precipitation',
+      dataset: imerg.dataset,
+      datasetId: imerg.datasetId,
+      variable: imerg.variable,
+      precipitationMm: imerg.precipitationMm,
+      gridPoint: imerg.gridPoint,
+      indices: imerg.indices,
+      sourceUrl: imerg.sourceUrl,
+      queryUrl: imerg.queryUrl,
+    });
+  } catch (error) {
+    observations.push({
+      type: 'precipitation',
+      dataset: 'GPM IMERG Daily Precipitation (GPM_3IMERGDF.06)',
+      error: error && error.message ? error.message : 'Unknown error while querying GESDISC',
+    });
+  }
+
+  return observations;
+}
+
 async function generateForecast({
   latitude,
   longitude,
@@ -172,6 +205,12 @@ async function generateForecast({
 
   const forecast = buildForecast(trainingRecords, evaluationRecords, thresholds);
 
+  const externalObservations = await gatherExternalObservations({
+    latitude,
+    longitude,
+    targetDate,
+  });
+
   return {
     query: {
       latitude,
@@ -190,6 +229,7 @@ async function generateForecast({
       ...forecast.evaluation,
     },
     comparison: forecast.comparison,
+    externalObservations,
     metadata: {
       training: trainingData.metadata,
       evaluation: evaluationData.metadata,
