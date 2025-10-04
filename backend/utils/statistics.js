@@ -206,18 +206,25 @@ function computeAggregates(measurements) {
   };
 }
 
-function computeProbabilities(records, customThresholds) {
-  const thresholds = mergeThresholds(customThresholds);
+function computeProbabilitiesWithThresholds(records, thresholds) {
   const totalRecords = records.length;
   const { probabilities, measurements } = evaluateConditions(records, thresholds);
-
   const aggregates = computeAggregates(measurements);
 
   return {
-    thresholds,
     totalDays: totalRecords,
     probabilities,
     aggregates,
+  };
+}
+
+function computeProbabilities(records, customThresholds) {
+  const thresholds = mergeThresholds(customThresholds);
+  const stats = computeProbabilitiesWithThresholds(records, thresholds);
+
+  return {
+    thresholds,
+    ...stats,
   };
 }
 
@@ -225,5 +232,7 @@ module.exports = {
   DEFAULT_THRESHOLDS,
   mergeThresholds,
   calculateHeatIndexCelsius,
+  evaluateConditions,
+  computeProbabilitiesWithThresholds,
   computeProbabilities,
 };
