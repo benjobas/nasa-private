@@ -1,0 +1,22 @@
+### Health Check
+GET http://localhost:3000/
+
+### Obtener valores predeterminados
+GET http://localhost:3000/api/probabilities/defaults
+
+### Calcular probabilidades
+POST http://localhost:3000/api/probabilities
+Content-Type: application/json
+
+{
+  "latitude": 40.7128,
+  "longitude": -74.006,
+  "startMonthDay": "0601",
+  "endMonthDay": "0831",
+  "startYear": 2013,
+  "endYear": 2022,
+  "thresholds": {
+    "veryHot": { "temperatureC": 30 },
+    "veryWindy": { "windSpeedMs": 8 }
+  }
+}

@@ -1,19 +1,11 @@
-# Weather Probability Service
+Características principales:
 
-This document describes the backend service that powers the **Will it rain on my parade?** challenge. The API aggregates NASA POWER daily reanalysis data and returns probabilities for outdoor condition categories.
+- Integración con la [API de NASA POWER](https://power.larc.nasa.gov/).
+- Probabilidades para días "muy calurosos", "muy fríos", "muy ventosos", "muy húmedos" y "muy incómodos".
+- Umbrales configurables para cada categoría.
+- Métricas agregadas (temperaturas medias, precipitación total, etc.) útiles para construir paneles de control.
 
-## Overview
-
-The backend exposes an HTTP API built with Express. The service downloads historical records for a requested latitude/longitude and computes statistics for the selected time window across multiple years.
-
-Key features:
-
-- Integration with the [NASA POWER API](https://power.larc.nasa.gov/).
-- Probabilities for "very hot", "very cold", "very windy", "very wet", and "very uncomfortable" days.
-- Configurable thresholds for each category.
-- Aggregate metrics (mean temperatures, total precipitation, etc.) useful for building dashboards.
-
-## Running the service
+## Ejecución del servicio
 
 ```bash
 cd backend
@@ -21,23 +13,21 @@ npm install
 node index.js
 ```
 
-By default the server listens on port `3000`. Set the `PORT` environment variable to change it.
-
 ## Endpoints
 
 ### `GET /`
 
-Simple health check that returns service status and description.
+Chequeo de salud simple que devuelve el estado y la descripción del servicio.
 
 ### `GET /api/probabilities/defaults`
 
-Returns the default NASA POWER parameters, community, and threshold values used when clients do not supply custom settings.
+Devuelve los parámetros predeterminados de NASA POWER, la comunidad y los valores de umbral utilizados cuando los clientes no proporcionan configuraciones personalizadas.
 
 ### `POST /api/probabilities`
 
-Computes weather probabilities for the requested location and time range.
+Calcula las probabilidades meteorológicas para la ubicación y el rango de tiempo solicitados.
 
-#### Request body
+#### Cuerpo de la solicitud
 
 ```json
 {
@@ -54,19 +44,19 @@ Computes weather probabilities for the requested location and time range.
 }
 ```
 
-| Field | Type | Required | Description |
+| Campo | Tipo | Requerido | Descripción |
 | --- | --- | --- | --- |
-| `latitude` | `number` | ✅ | Latitude in degrees (-90 to 90). |
-| `longitude` | `number` | ✅ | Longitude in degrees (-180 to 180). |
-| `startMonthDay` | `string`/`number` | ✅ | Start day in `MMDD` format. |
-| `endMonthDay` | `string`/`number` | ✅ | End day in `MMDD` format. Can be before `startMonthDay` to span two calendar years. |
-| `startYear` | `integer` | ✅ | First year to include in the analysis. |
-| `endYear` | `integer` | ✅ | Last year to include in the analysis. |
-| `thresholds` | `object` | ❌ | Overrides for the category thresholds. |
-| `parameters` | `array`/`string` | ❌ | Custom NASA POWER parameters. Defaults to `T2M,T2M_MAX,T2M_MIN,WS2M,PRECTOTCORR,RH2M`. |
-| `community` | `string` | ❌ | NASA POWER community (defaults to `RE`). |
+| `latitude` | `number` | ✅ | Latitud en grados (-90 a 90). |
+| `longitude` | `number` | ✅ | Longitud en grados (-180 a 180). |
+| `startMonthDay` | `string`/`number` | ✅ | Día de inicio en formato `MMDD`. |
+| `endMonthDay` | `string`/`number` | ✅ | Día de fin en formato `MMDD`. Puede ser anterior a `startMonthDay` para abarcar dos años calendario. |
+| `startYear` | `integer` | ✅ | Primer año incluido en el análisis. |
+| `endYear` | `integer` | ✅ | Último año incluido en el análisis. |
+| `thresholds` | `object` | ❌ | Sobrescribe los umbrales de las categorías. |
+| `parameters` | `array`/`string` | ❌ | Parámetros personalizados de NASA POWER. Por defecto: `T2M,T2M_MAX,T2M_MIN,WS2M,PRECTOTCORR,RH2M`. |
+| `community` | `string` | ❌ | Comunidad de NASA POWER (por defecto: `RE`). |
 
-#### Response
+#### Respuesta
 
 ```json
 {
@@ -121,26 +111,26 @@ Computes weather probabilities for the requested location and time range.
 }
 ```
 
-- `probability` values are expressed in `[0, 1]`. Multiply by 100 to obtain percentages.
-- `daysEvaluated` represents the number of days for which data was available for that category (e.g., precipitation data may be missing on some days).
-- The `metadata` array contains the original NASA POWER responses for transparency and debugging purposes.
+- Los valores de `probability` se expresan en `[0, 1]`. Multiplique por 100 para obtener porcentajes.
+- `daysEvaluated` representa el número de días para los cuales había datos disponibles para esa categoría (por ejemplo, pueden faltar datos de precipitación en algunos días).
+- El array `metadata` contiene las respuestas originales de NASA POWER para transparencia y propósitos de depuración.
 
-## Category definitions
+## Definiciones de categorías
 
-| Category | Condition |
+| Categoría | Condición |
 | --- | --- |
-| Very hot | Maximum temperature ≥ 32 °C (customizable) |
-| Very cold | Minimum temperature ≤ 0 °C |
-| Very windy | Mean wind speed ≥ 10 m/s |
-| Very wet | Daily precipitation ≥ 10 mm |
-| Very uncomfortable | Heat index ≥ 30 °C **and** relative humidity ≥ 70% |
+| Muy caluroso | Temperatura máxima ≥ 32 °C (personalizable) |
+| Muy frío | Temperatura mínima ≤ 0 °C |
+| Muy ventoso | Velocidad media del viento ≥ 10 m/s |
+| Muy húmedo | Precipitación diaria ≥ 10 mm |
+| Muy incómodo | Índice de calor ≥ 30 °C **y** humedad relativa ≥ 70% |
 
-These values are intended as sensible defaults for planning outdoor activities and can be adapted by clients through the request payload.
+Estos valores se proponen como valores predeterminados razonables para planificar actividades al aire libre y pueden ser adaptados por los clientes a través del cuerpo de la solicitud.
 
-## Notes and limitations
+## Notas y limitaciones
 
-- The service performs one NASA POWER request per season per year; large year ranges may result in longer response times.
-- NASA POWER data coverage is best between 1984 and present. Requests outside this window may return sparse data.
-- The current implementation focuses on point queries (latitude/longitude). Area-averaged queries could be added by integrating other NASA APIs that support bounding boxes.
-- A caching layer (e.g., Redis or filesystem) can be incorporated to reduce repeated downloads for popular locations.
+- El servicio realiza una solicitud a NASA POWER por temporada por año; rangos de años grandes pueden resultar en tiempos de respuesta más largos.
+- La cobertura de datos de NASA POWER es mejor entre 1984 y el presente. Las solicitudes fuera de esta ventana pueden devolver datos escasos.
+- La implementación actual se centra en consultas puntuales (latitud/longitud). Las consultas promediadas por área podrían añadirse integrando otras APIs de NASA que soporten cajas delimitadoras.
+- Se puede incorporar una capa de caché (por ejemplo, Redis o sistema de archivos) para reducir descargas repetidas para ubicaciones populares.
 
