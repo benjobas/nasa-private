@@ -23,9 +23,9 @@ Chequeo de salud simple que devuelve el estado y la descripción del servicio.
 
 Devuelve los parámetros predeterminados de NASA POWER, la comunidad y los valores de umbral utilizados cuando los clientes no proporcionan configuraciones personalizadas.
 
-### `POST /api/probabilities`
+### `POST /api/probabilities/forecast`
 
-Calcula las probabilidades meteorológicas para la ubicación y el rango de tiempo solicitados.
+Genera una predicción para una fecha puntual utilizando un histórico de entrenamiento y valida el resultado con los datos reales del año objetivo.
 
 #### Cuerpo de la solicitud
 
@@ -33,13 +33,11 @@ Calcula las probabilidades meteorológicas para la ubicación y el rango de tiem
 {
   "latitude": 40.7128,
   "longitude": -74.006,
-  "startMonthDay": "0601",
-  "endMonthDay": "0831",
-  "startYear": 2013,
-  "endYear": 2022,
+  "targetDate": "2022-07-04",
+  "trainingStartYear": 1990,
+  "trainingEndYear": 2021,
   "thresholds": {
-    "veryHot": { "temperatureC": 30 },
-    "veryWindy": { "windSpeedMs": 8 }
+    "veryHot": { "temperatureC": 30 }
   }
 }
 ```
@@ -48,12 +46,11 @@ Calcula las probabilidades meteorológicas para la ubicación y el rango de tiem
 | --- | --- | --- | --- |
 | `latitude` | `number` | ✅ | Latitud en grados (-90 a 90). |
 | `longitude` | `number` | ✅ | Longitud en grados (-180 a 180). |
-| `startMonthDay` | `string`/`number` | ✅ | Día de inicio en formato `MMDD`. |
-| `endMonthDay` | `string`/`number` | ✅ | Día de fin en formato `MMDD`. Puede ser anterior a `startMonthDay` para abarcar dos años calendario. |
-| `startYear` | `integer` | ✅ | Primer año incluido en el análisis. |
-| `endYear` | `integer` | ✅ | Último año incluido en el análisis. |
-| `thresholds` | `object` | ❌ | Sobrescribe los umbrales de las categorías. |
-| `parameters` | `array`/`string` | ❌ | Parámetros personalizados de NASA POWER. Por defecto: `T2M,T2M_MAX,T2M_MIN,WS2M,PRECTOTCORR,RH2M`. |
+| `targetDate` | `string` | ✅ | Fecha objetivo en formato ISO `YYYY-MM-DD`. |
+| `trainingStartYear` | `integer` | ❌ | Primer año incluido en el entrenamiento (por defecto 1984). |
+| `trainingEndYear` | `integer` | ❌ | Último año de entrenamiento (por defecto el año anterior a `targetDate`). |
+| `thresholds` | `object` | ❌ | Umbrales personalizados por categoría. |
+| `parameters` | `array`/`string` | ❌ | Parámetros personalizados de NASA POWER. |
 | `community` | `string` | ❌ | Comunidad de NASA POWER (por defecto: `RE`). |
 
 #### Respuesta
@@ -63,10 +60,10 @@ Calcula las probabilidades meteorológicas para la ubicación y el rango de tiem
   "query": {
     "latitude": 40.7128,
     "longitude": -74.006,
-    "startMonthDay": "0601",
-    "endMonthDay": "0831",
-    "startYear": 2013,
-    "endYear": 2022,
+    "targetDate": "2022-07-04",
+    "trainingStartYear": 1990,
+    "trainingEndYear": 2021,
+    "evaluationYear": 2022,
     "parameters": ["T2M", "T2M_MAX", "T2M_MIN", "WS2M", "PRECTOTCORR", "RH2M"],
     "community": "RE",
     "thresholds": {
@@ -80,40 +77,40 @@ Calcula las probabilidades meteorológicas para la ubicación y el rango de tiem
       }
     }
   },
-  "results": {
-    "thresholds": { ... },
-    "totalDays": 920,
-    "probabilities": {
+  "training": {
+    "totalDays": 32,
+    "probabilities": { "veryHot": { "probability": 0.22, "daysEvaluated": 32, ... }, ... },
+    "aggregates": { "temperature": { "meanC": 27.4, "maxC": 33.1, ... }, ... }
+  },
+  "evaluation": {
+    "year": 2022,
+    "totalDays": 1,
+    "probabilities": { "veryHot": { "probability": 1, "daysMatching": 1, ... }, ... },
+    "aggregates": { "temperature": { "meanC": 33.8, "maxC": 33.8, ... }, ... }
+  },
+  "comparison": {
+    "meanBrierScore": 0.0484,
+    "categories": {
       "veryHot": {
-        "daysMatching": 120,
-        "daysEvaluated": 920,
-        "probability": 0.1304,
-        "threshold": { "temperatureC": 32 }
-      },
-      "veryCold": { ... }
-    },
-    "aggregates": {
-      "temperature": {
-        "meanC": 24.1,
-        "maxC": 29.2,
-        "minC": 18.4
-      },
-      "wind": { "meanSpeedMs": 4.3 },
-      "precipitation": {
-        "meanDailyMm": 3.1,
-        "totalMm": 285.2
-      },
-      "humidity": { "meanPct": 71.5 },
-      "heatIndex": { "meanC": 25.9 }
+        "predictedProbability": 0.22,
+        "actualOutcome": 1,
+        "absoluteError": 0.78,
+        "brierScore": 0.6084,
+        "daysEvaluated": 1
+      }
     }
   },
-  "metadata": [ ... ]
+  "metadata": {
+    "training": [ ... ],
+    "evaluation": [ ... ]
+  }
 }
 ```
 
-- Los valores de `probability` se expresan en `[0, 1]`. Multiplique por 100 para obtener porcentajes.
-- `daysEvaluated` representa el número de días para los cuales había datos disponibles para esa categoría (por ejemplo, pueden faltar datos de precipitación en algunos días).
-- El array `metadata` contiene las respuestas originales de NASA POWER para transparencia y propósitos de depuración.
+- Las probabilidades de entrenamiento se calculan sobre todos los años incluidos en la ventana histórica.
+- `actualOutcome` representa si la condición ocurrió en la fecha evaluada (1 = sí, 0 = no).
+- La métrica `meanBrierScore` resume el error cuadrático medio de las probabilidades predichas frente a los resultados observados.
+- `metadata.training` y `metadata.evaluation` conservan las respuestas crudas de NASA POWER utilizadas para reproducibilidad.
 
 ## Definiciones de categorías
 

@@ -1,70 +1,62 @@
 const express = require('express');
-const {
-  fetchSeasonalDailyData,
-  DEFAULT_PARAMETERS,
-  DEFAULT_COMMUNITY,
-} = require('../services/powerApi');
-const { computeProbabilities, DEFAULT_THRESHOLDS } = require('../utils/statistics');
+const { generateForecast, DEFAULT_MIN_TRAINING_YEAR } = require('../services/forecastModel');
+const { DEFAULT_PARAMETERS, DEFAULT_COMMUNITY } = require('../services/powerApi');
+const { DEFAULT_THRESHOLDS } = require('../utils/statistics');
 
 const router = express.Router();
-
-function isValidMonthDay(value) {
-  const padded = String(value).padStart(4, '0');
-  if (!/^\d{4}$/.test(padded)) {
-    return false;
-  }
-
-  const month = Number(padded.slice(0, 2));
-  const day = Number(padded.slice(2));
-
-  if (Number.isNaN(month) || Number.isNaN(day) || month < 1 || month > 12) {
-    return false;
-  }
-
-  const daysInMonth = new Date(2000, month, 0).getDate();
-  return day >= 1 && day <= daysInMonth;
-}
 
 function validateRequestBody(body) {
   const errors = [];
   const {
     latitude,
     longitude,
-    startMonthDay,
-    endMonthDay,
-    startYear,
-    endYear,
+    targetDate,
+    trainingStartYear,
+    trainingEndYear,
     thresholds,
     parameters,
     community,
   } = body;
 
-  if (typeof latitude !== 'number' || latitude < -90 || latitude > 90) {
+  if (typeof latitude !== 'number' || Number.isNaN(latitude) || latitude < -90 || latitude > 90) {
     errors.push('latitude must be a number between -90 and 90');
   }
 
-  if (typeof longitude !== 'number' || longitude < -180 || longitude > 180) {
+  if (
+    typeof longitude !== 'number' ||
+    Number.isNaN(longitude) ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
     errors.push('longitude must be a number between -180 and 180');
   }
 
-  if (!isValidMonthDay(startMonthDay)) {
-    errors.push('startMonthDay must be a string or number formatted as MMDD');
+  if (!targetDate) {
+    errors.push('targetDate is required (format: YYYY-MM-DD)');
   }
 
-  if (!isValidMonthDay(endMonthDay)) {
-    errors.push('endMonthDay must be a string or number formatted as MMDD');
+  if (
+    trainingStartYear !== undefined &&
+    trainingStartYear !== null &&
+    !Number.isInteger(trainingStartYear)
+  ) {
+    errors.push('trainingStartYear must be an integer year when provided');
   }
 
-  if (!Number.isInteger(startYear)) {
-    errors.push('startYear must be an integer year (e.g., 2010)');
+  if (
+    trainingEndYear !== undefined &&
+    trainingEndYear !== null &&
+    !Number.isInteger(trainingEndYear)
+  ) {
+    errors.push('trainingEndYear must be an integer year when provided');
   }
 
-  if (!Number.isInteger(endYear)) {
-    errors.push('endYear must be an integer year (e.g., 2020)');
-  }
-
-  if (Number.isInteger(startYear) && Number.isInteger(endYear) && startYear > endYear) {
-    errors.push('startYear cannot be greater than endYear');
+  if (
+    Number.isInteger(trainingStartYear) &&
+    Number.isInteger(trainingEndYear) &&
+    trainingStartYear > trainingEndYear
+  ) {
+    errors.push('trainingStartYear cannot be greater than trainingEndYear');
   }
 
   if (thresholds && typeof thresholds !== 'object') {
@@ -82,55 +74,20 @@ function validateRequestBody(body) {
   return errors;
 }
 
-router.post('/', async (req, res, next) => {
+router.post('/forecast', async (req, res, next) => {
   const errors = validateRequestBody(req.body || {});
 
   if (errors.length) {
     return res.status(400).json({ errors });
   }
 
-  const {
-    latitude,
-    longitude,
-    startMonthDay,
-    endMonthDay,
-    startYear,
-    endYear,
-    thresholds,
-    parameters,
-    community,
-  } = req.body;
-
   try {
-    const { records, metadata } = await fetchSeasonalDailyData({
-      latitude,
-      longitude,
-      startMonthDay,
-      endMonthDay,
-      startYear,
-      endYear,
-      parameters: parameters || DEFAULT_PARAMETERS,
-      community: community || DEFAULT_COMMUNITY,
-    });
-
-    const stats = computeProbabilities(records, thresholds);
-
-    return res.json({
-      query: {
-        latitude,
-        longitude,
-        startMonthDay: String(startMonthDay).padStart(4, '0'),
-        endMonthDay: String(endMonthDay).padStart(4, '0'),
-        startYear,
-        endYear,
-        parameters: parameters || DEFAULT_PARAMETERS,
-        community: community || DEFAULT_COMMUNITY,
-        thresholds: stats.thresholds,
-      },
-      results: stats,
-      metadata,
-    });
+    const forecast = await generateForecast(req.body);
+    return res.json(forecast);
   } catch (error) {
+    if (error && typeof error.message === 'string') {
+      return res.status(400).json({ error: error.message });
+    }
     return next(error);
   }
 });
@@ -140,6 +97,7 @@ router.get('/defaults', (_req, res) => {
     parameters: DEFAULT_PARAMETERS,
     community: DEFAULT_COMMUNITY,
     thresholds: DEFAULT_THRESHOLDS,
+    minimumTrainingYear: DEFAULT_MIN_TRAINING_YEAR,
   });
 });
 
