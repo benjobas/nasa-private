@@ -32,7 +32,7 @@ function sanitizeTrainingYears(targetYear, trainingStartYear, trainingEndYear) {
   const resolvedEndYear =
     trainingEndYear !== undefined && trainingEndYear !== null
       ? Number(trainingEndYear)
-      : targetYear - 1;
+      : Math.min(targetYear - 1, new Date().getUTCFullYear());
 
   const resolvedStartYear =
     trainingStartYear !== undefined && trainingStartYear !== null
@@ -71,6 +71,10 @@ function ensureDate(value) {
     throw new Error('targetDate must be a valid ISO-8601 date string (YYYY-MM-DD)');
   }
   return date;
+}
+
+function isFutureDate(date) {
+  return date.getTime() > Date.now();
 }
 
 async function fetchDataForRange({
@@ -164,6 +168,10 @@ function normalizeForecastOptions(options = {}) {
     throw new Error('targetDate must be after the minimum training year');
   }
 
+  // Permitir fechas futuras: si targetYear está en el futuro (más allá del año actual),
+  // ajustamos endYear máximo al año actual para no pedir datos inexistentes a POWER.
+  // Nota: effectiveTargetYear reservado si se requiere lógica adicional futura para limitar predicciones.
+
   const { trainingStartYear: resolvedStartYear, trainingEndYear: resolvedEndYear } =
     sanitizeTrainingYears(targetYear, trainingStartYear, trainingEndYear);
 
@@ -176,7 +184,7 @@ function normalizeForecastOptions(options = {}) {
     latitude,
     longitude,
     targetDate: target.toISOString().slice(0, 10),
-    targetYear,
+  targetYear: targetYear,
     resolvedStartYear,
     resolvedEndYear,
     parameterList,
@@ -268,23 +276,30 @@ async function completeForecastFromSnapshot(snapshot, { skipExternalObservations
   const parameterList = normalizeParameters(parameters);
   const resolvedCommunity = community || DEFAULT_COMMUNITY;
 
-  const evaluationData = await fetchDataForRange({
-    latitude,
-    longitude,
-    startMonthDay: monthDay,
-    endMonthDay: monthDay,
-    startYear: evaluationYear,
-    endYear: evaluationYear,
-    parameters: parameterList,
-    community: resolvedCommunity,
-  });
+  const targetIsFuture = isFutureDate(target);
+  let evaluationRecords = [];
+  let evaluationMetadata = [];
 
-  const evaluationRecords = evaluationData.records.filter(
-    (record) => record.seasonYear === evaluationYear,
-  );
+  if (!targetIsFuture) {
+    const evaluationData = await fetchDataForRange({
+      latitude,
+      longitude,
+      startMonthDay: monthDay,
+      endMonthDay: monthDay,
+      startYear: evaluationYear,
+      endYear: evaluationYear,
+      parameters: parameterList,
+      community: resolvedCommunity,
+    });
 
-  if (!evaluationRecords.length) {
-    throw new Error('No evaluation records available for the requested target date.');
+    evaluationRecords = evaluationData.records.filter(
+      (record) => record.seasonYear === evaluationYear,
+    );
+    evaluationMetadata = evaluationData.metadata;
+
+    if (!evaluationRecords.length) {
+      throw new Error('No evaluation records available for the requested target date.');
+    }
   }
 
   const evaluationStats = computeProbabilitiesWithThresholds(evaluationRecords, thresholds);
@@ -294,22 +309,38 @@ async function completeForecastFromSnapshot(snapshot, { skipExternalObservations
     ? []
     : await gatherExternalObservations({ latitude, longitude, targetDate });
 
+  const evaluation = {
+    year: evaluationYear,
+    ...evaluationStats,
+  };
+
+  if (targetIsFuture) {
+    evaluation.pending = true;
+    evaluation.reason = 'Evaluation data is not yet available for the requested future date.';
+  }
+
+  const metadata = {
+    training: snapshot.metadata?.training ?? null,
+    evaluation: targetIsFuture ? [] : evaluationMetadata,
+  };
+
+  if (targetIsFuture) {
+    metadata.evaluationStatus = {
+      state: 'pending',
+      reason: 'Awaiting NASA POWER observations for the evaluation year.',
+    };
+  }
+
   return {
     snapshotGeneratedAt: snapshot.generatedAt,
     completedAt: new Date().toISOString(),
     query,
     thresholds,
     training,
-    evaluation: {
-      year: evaluationYear,
-      ...evaluationStats,
-    },
+    evaluation,
     comparison,
     externalObservations,
-    metadata: {
-      training: snapshot.metadata?.training ?? null,
-      evaluation: evaluationData.metadata,
-    },
+    metadata,
   };
 }
 

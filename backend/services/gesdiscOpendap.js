@@ -1,3 +1,4 @@
+require('dotenv/config');
 const fetch = require('node-fetch');
 
 const IMERG_DATASET = {
@@ -65,7 +66,7 @@ function buildImergFileName(year, month, day) {
 }
 
 function buildImergFileUrl(year, month, fileName) {
-  return `${IMERG_DATASET.baseUrl}/${year}/${month}/${fileName}`;
+  return `${IMERG_DATASET.baseUrl}/${year}/${fileName}`;
 }
 
 function buildImergQueryUrl(year, month, day, latIndex, lonIndex) {

@@ -12,6 +12,7 @@ const {
 } = require('../services/gesdiscOpendap');
 
 const FIXED_DATE = { year: '2020', month: '01', day: '15' };
+const RUN_GESDISC_INTEGRATION = process.env.RUN_GESDISC_INTEGRATION === '1';
 
 test('computeImergIndices clamps coordinates to grid limits', () => {
   const nearZero = computeImergIndices(0.04, -0.07);
@@ -35,7 +36,7 @@ test('buildImergFileName and URLs preserve expected patterns', () => {
   const baseUrl = buildImergFileUrl(FIXED_DATE.year, FIXED_DATE.month, fileName);
   assert.equal(
     baseUrl,
-    `${IMERG_DATASET.baseUrl}/${FIXED_DATE.year}/${FIXED_DATE.month}/${fileName}`,
+    `${IMERG_DATASET.baseUrl}/${FIXED_DATE.year}/${fileName}`,
   );
 
   const { latIndex, lonIndex } = computeImergIndices(-10.2, 75.88);
@@ -63,7 +64,7 @@ test('parseOpendapValue extracts the last numeric value', () => {
 test(
   'fetchDailyPrecipitationFromImerg integrates with live endpoint',
   {
-    skip: !process.env.GESDISC_TOKEN,
+    skip: !RUN_GESDISC_INTEGRATION || !process.env.GESDISC_TOKEN,
     timeout: 30_000,
   },
   async (t) => {

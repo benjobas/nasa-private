@@ -11,7 +11,22 @@ Content-Type: application/json
 {
   "latitude": 40.7128,
   "longitude": -74.006,
-  "targetDate": "2022-07-04",
+  "targetDate": "2027-07-04",
+  "thresholds": {
+    "veryHot": { "temperatureC": 30 },
+    "veryWindy": { "windSpeedMs": 8 }
+  }
+}
+
+
+### Generar forecast con observaciones externas 
+POST https://nasa-private.vercel.app/api/probabilities/forecast
+Content-Type: application/json
+
+{
+  "latitude": 40.7128,
+  "longitude": -74.006,
+  "targetDate": "2027-07-04",
   "thresholds": {
     "veryHot": { "temperatureC": 30 },
     "veryWindy": { "windSpeedMs": 8 }

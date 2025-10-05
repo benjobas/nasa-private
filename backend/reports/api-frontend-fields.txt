@@ -1,0 +1,132 @@
+Guía de campos frontend — Respuesta `POST /api/probabilities/forecast`
+======================================================================
+
+Referencia basada en el JSON real devuelto por el backend. Conserva todos los campos útiles para la UI y la analítica.
+
+```json
+{
+	"snapshotGeneratedAt": "ISO-8601",
+	"completedAt": "ISO-8601",
+	"query": {
+		"latitude": 40.7128,
+		"longitude": -74.006,
+		"targetDate": "YYYY-MM-DD",
+		"evaluationYear": 2022,
+		"trainingStartYear": 1984,
+		"trainingEndYear": 2021,
+		"parameters": ["T2M", "T2M_MAX", "T2M_MIN", "WS2M", "PRECTOTCORR", "RH2M"],
+		"community": "RE",
+		"thresholds": {
+			"veryHot": { "temperatureC": 30 },
+			"veryCold": { "temperatureC": 0 },
+			"veryWindy": { "windSpeedMs": 8 },
+			"veryWet": { "precipitationMm": 10 },
+			"veryUncomfortable": { "heatIndexC": 30, "humidityPct": 70 }
+		}
+	},
+	"thresholds": { ... idéntico a query.thresholds ... },
+	"training": {
+		"totalDays": 38,
+		"probabilities": {
+			"veryHot": {
+				"daysMatching": 2,
+				"daysEvaluated": 38,
+				"probability": 0.05263157894736842,
+				"threshold": { "temperatureC": 30 }
+			},
+			"veryCold": { ... },
+			"veryWindy": { ... },
+			"veryWet": { ... },
+			"veryUncomfortable": { ... }
+		},
+		"aggregates": {
+			"temperature": { "meanC": 22.62, "maxC": 25.23, "minC": 19.87 },
+			"wind": { "meanSpeedMs": 3.12 },
+			"precipitation": { "meanDailyMm": 3.91, "totalMm": 148.62 },
+			"humidity": { "meanPct": 80.33 },
+			"heatIndex": { "meanC": 22.73 }
+		}
+	},
+	"evaluation": {
+		"year": 2022,
+		"totalDays": 1,
+		"probabilities": {
+			"veryHot": { "daysMatching": 0, "daysEvaluated": 1, "probability": 0, "threshold": { ... } },
+			"veryCold": { ... },
+			"veryWindy": { ... },
+			"veryWet": { ... },
+			"veryUncomfortable": { ... }
+		},
+		"aggregates": {
+			"temperature": { "meanC": 22.89, "maxC": 26.15, "minC": 18.38 },
+			"wind": { "meanSpeedMs": 2.68 },
+			"precipitation": { "meanDailyMm": 0.01, "totalMm": 0.01 },
+			"humidity": { "meanPct": 63.33 },
+			"heatIndex": { "meanC": 22.89 }
+		}
+	},
+	"comparison": {
+		"categories": {
+			"veryHot": {
+				"predictedProbability": 0.05263,
+				"actualOutcome": 0,
+				"absoluteError": 0.05263,
+				"brierScore": 0.00277,
+				"daysEvaluated": 1
+			},
+			"veryCold": { ... },
+			"veryWindy": { ... },
+			"veryWet": { ... },
+			"veryUncomfortable": { ... }
+		},
+		"meanBrierScore": 0.00554
+	},
+	"externalObservations": [
+		{
+			"type": "precipitation",
+			"dataset": "GPM IMERG Daily Precipitation (GPM_3IMERGDF.06)",
+			"error": "GESDISC token not configured. Set GESDISC_TOKEN in the environment."
+		}
+	],
+	"metadata": {
+		"training": [ ... registros NASA POWER por año ... ],
+		"evaluation": [ ... registro NASA POWER del año objetivo ... ]
+	}
+}
+```
+
+Campos prioritarios para mostrar en frontend
+-------------------------------------------
+
+- Predicción actual (principal):
+    - `comparison.categories.veryHot.predictedProbability`
+    - `comparison.categories.veryCold.predictedProbability`
+    - `comparison.categories.veryWindy.predictedProbability`
+    - `comparison.categories.veryWet.predictedProbability`
+    - `comparison.categories.veryUncomfortable.predictedProbability`
+
+- Resultado observado (solo si ya pasó la fecha):
+    - `comparison.categories[cat].actualOutcome`
+    - `comparison.categories[cat].brierScore`
+    - `comparison.meanBrierScore`
+
+- Contexto histórico (opcional, para gráficos o explicaciones):
+    - `training.probabilities[cat].probability`
+    - `training.aggregates.*`
+    - `evaluation.aggregates.*` (si hay datos recientes)
+
+- Contexto de la consulta y umbrales:
+    - `query.latitude`, `query.longitude`, `query.targetDate`
+    - `query.thresholds[cat]` para mostrar/editar umbrales
+
+- Observaciones externas para estado de integraciones:
+	- `externalObservations[0].error` (muestra si falta el token de GESDISC u otros problemas)
+
+Notas
+-----
+
+- `comparison.categories[cat].predictedProbability` es la probabilidad que debes mostrar al usuario.
+- `training.probabilities[cat].probability` describe la frecuencia histórica y es opcional.
+- Las probabilidades están en el rango `[0, 1]`; multiplica por 100 para porcentajes.
+- `actualOutcome` también está en `[0, 1]` (basado en días coincidentes vs. evaluados) y puede ser `null` si no hubo datos.
+- El array `metadata` conserva la respuesta cruda de NASA POWER; es útil para depuración o auditoría, pero puede omitirse en la UI si no se necesita.

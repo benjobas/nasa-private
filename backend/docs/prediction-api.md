@@ -150,6 +150,7 @@ Estos valores se proponen como valores predeterminados razonables para planifica
 - La implementación actual se centra en consultas puntuales (latitud/longitud). Las consultas promediadas por área podrían añadirse integrando otras APIs de NASA que soporten cajas delimitadoras.
 - Se puede incorporar una capa de caché (por ejemplo, Redis o sistema de archivos) para reducir descargas repetidas para ubicaciones populares.
 - Para habilitar la observación externa de precipitación, define `GESDISC_TOKEN` (Bearer) en un `.env` conforme a `.env.example`. Si no se configura, la API devolverá el motivo en `externalObservations[].error` pero el resto de la respuesta seguirá disponible.
+- Cuando `targetDate` se encuentra en el futuro, la API omite la verificación con datos observados. La respuesta incluirá `evaluation.pending = true`, `evaluation.totalDays = 0` y `actualOutcome = null` en todas las categorías de `comparison`.
 
 ## Pruebas y validación
 
